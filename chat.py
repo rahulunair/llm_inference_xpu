@@ -11,12 +11,56 @@ END_CONVO = "\n"
 MAX_PRINT_LENGTH = 70
 
 
+g_conversation = ""
+
+
+def gradio_chat_with_llm(
+    model: AutoModelForCausalLM,
+    tokenizer: AutoTokenizer,
+    stop_token_ids: list,
+    user_input,
+    device="xpu",
+    dtype=torch.float32,
+    do_sample=True,
+    max_generated_tokens=50,
+    temperature=0.1,
+    top_p=0.95,
+    top_k=80,
+    repetition_penalty=1.5,
+    reset=False,
+):
+    global g_conversation
+    if reset:
+        g_conversation = ""
+    g_conversation += f"{HUMAN_START}{user_input}{END_CONVO}{BOT_START}"
+    input_ids = tokenizer(g_conversation).input_ids
+    input_ids = torch.tensor(input_ids).to(device).unsqueeze(0)
+
+    generation_kwargs = dict(
+        do_sample=do_sample,
+        input_ids=input_ids,
+        max_new_tokens=max_generated_tokens,
+        temperature=temperature,
+        top_p=top_p,
+        top_k=top_k,
+        repetition_penalty=repetition_penalty,
+        pad_token_id=0,
+        stopping_criteria=StoppingCriteriaList([StopOnTokens(stop_token_ids)]),
+    )
+    generated_tokens = infer(model, dtype, device, generation_kwargs)
+    generated_text = tokenizer.decode(
+        generated_tokens[0][-max_generated_tokens:], skip_special_tokens=True
+    )
+    return generated_text
+
+
 def chat_with_llm(
     model: AutoModelForCausalLM,
     tokenizer: AutoTokenizer,
     stop_token_ids: frozenset,
     device_type: str,
     dtype: torch.dtype,
+    do_sample: bool = True,
     max_generated_tokens: int = 50,
     temperature: float = 0.1,
     top_p: float = 0.95,
@@ -24,7 +68,7 @@ def chat_with_llm(
     repetition_penalty: float = 1.5,
 ):
     generation_kwargs = dict(
-        do_sample=True,
+        do_sample=do_sample,
         input_ids=None,
         max_new_tokens=max_generated_tokens,
         temperature=temperature,
@@ -85,9 +129,7 @@ def benchmark_chat_with_llm(
             top_k=top_k,
             repetition_penalty=repetition_penalty,
             pad_token_id=0,
-            stopping_criteria=StoppingCriteriaList(
-                [StopOnTokens(stop_token_ids)]
-            ),
+            stopping_criteria=StoppingCriteriaList([StopOnTokens(stop_token_ids)]),
         )
         generated_tokens = infer(model, dtype, device_type, generation_kwargs)
 

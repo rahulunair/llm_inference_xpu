@@ -31,7 +31,7 @@ ipex.xpu.seed_all()
 def parse_arguments():
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "--device", default="xpu", help="Choose device: cpu, xpu, or gpu"
+        "--device", default="xpu", help="Choose device: cpu, xpu, or cuda"
     )
     parser.add_argument(
         "--dtype", default="float32", help="Choose data type: float32 or float16"
@@ -41,18 +41,61 @@ def parse_arguments():
         default="togethercomputer/RedPajama-INCITE-Chat-3B-v1",
         help="LLM model name",
     )
+    parser.add_argument(
+        "--do_sample", action="store_true", help="Enable sampling in generation"
+    )
+    parser.add_argument(
+        "--max_generated_tokens",
+        type=int,
+        default=50,
+        help="Maximum number of tokens to generate",
+    )
+    parser.add_argument(
+        "--temperature",
+        type=float,
+        default=0.1,
+        help="Temperature for generation",
+    )
+    parser.add_argument(
+        "--top_p",
+        type=float,
+        default=0.95,
+        help="Top p for nucleus sampling",
+    )
+    parser.add_argument(
+        "--top_k",
+        type=int,
+        default=80,
+        help="Top k for k-top sampling",
+    )
+    parser.add_argument(
+        "--repetition_penalty",
+        type=float,
+        default=1.5,
+        help="Repetition penalty for generation",
+    )
+    parser.add_argument(
+        "--bench",
+        action="store_true",
+        help="benchmark llm",
+    )
+    parser.add_argument(
+        "--chat",
+        action="store_true",
+        help="deploy an interactive chatbot",
+    )
     return parser.parse_args()
 
 
-def determine_device_and_dtype(args):
-    device_type = args.device.lower()
+def determine_device_and_dtype(device, dtype):
+    device_type = device.lower()
     if device_type == "xpu":
         device_type = "xpu"
-    elif device_type == "gpu":
+    elif device_type == "cuda":
         device_type = "cuda"
     else:
         device_type = "cpu"
-    dtype = args.dtype
+    dtype = dtype
     if dtype == "float16":
         dtype = torch.float16
     elif dtype == "bfloat16":
@@ -62,23 +105,22 @@ def determine_device_and_dtype(args):
     return device_type, dtype
 
 
-def load_model(args):
-    print(f"Running LLM in {args.device} mode with IPEX optimization")
-    print(f"Using data type {args.dtype}")
+def load_model(model_name, device, dtype):
+    print(f"Running LLM in {device} mode with IPEX optimization")
+    print(f"Using data type {dtype}")
     print(f"Loading model...")
     model = AutoModelForCausalLM.from_pretrained(
-        args.model_name, torch_dtype=eval(f"torch.{args.dtype}"), trust_remote_code=True
+        model_name, torch_dtype=dtype, trust_remote_code=True
     )
-    model = model.to(args.device)
-    print(f"Device used when loading model: {args.device}, dtype: {args.dtype}")
-    model = ipex.optimize(model.eval(), dtype=eval(f"torch.{args.dtype}"))
-    tokenizer = AutoTokenizer.from_pretrained(args.model_name)
+    model = model.to(device)
+    print(f"Device used when loading model: {device}, dtype: {dtype}")
+    model = ipex.optimize(model.eval(), dtype=dtype)
+    tokenizer = AutoTokenizer.from_pretrained(model_name)
     stop_token_ids = frozenset(tokenizer.convert_tokens_to_ids(["<"]))
     model_end_tokens = frozenset(["<"])
     print(
-        f"Model [{args.model_name}] loaded. Stop Token Ids: {stop_token_ids}. In {model.device} mode!"
+        f"Model [{model_name}] loaded. Stop Token Ids: {stop_token_ids}. In {device} mode!"
     )
-
     return model, tokenizer, stop_token_ids, model_end_tokens
 
 
@@ -105,11 +147,25 @@ def warm_up_model(model, tokenizer, device_type, dtype, steps=2):
 
 def main():
     args = parse_arguments()
-    device_type, dtype = determine_device_and_dtype(args)
-    model, tokenizer, stop_token_ids, model_end_tokens = load_model(args)
-    # model = warm_up_model(model, tokenizer, device_type, dtype)
-    benchmark_chat_with_llm(model, tokenizer, stop_token_ids, device_type, dtype)
-    #chat_with_llm(model, tokenizer, stop_token_ids, device_type, dtype)
+    device_type, dtype = determine_device_and_dtype(args.device, args.dtype)
+    model, tokenizer, stop_token_ids, _ = load_model(
+        args.model_name, device_type, dtype
+    )
+    # model = warm_up_model(model, tokenizer, args.device, args.dtype, steps=2)
+    # benchmark_chat_with_llm(model, tokenizer, stop_token_ids, args.device, args.dtype)
+    chat_with_llm(
+        model,
+        tokenizer,
+        stop_token_ids,
+        args.device,
+        args.dtype,
+        args.do_sample,
+        args.max_generated_tokens,
+        args.temperature,
+        args.top_p,
+        args.top_k,
+        args.repetition_penalty,
+    )
 
 
 if __name__ == "__main__":
